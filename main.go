@@ -6,6 +6,7 @@ import (
 	"github.com/rancher/external-lb/metadata"
 	"github.com/rancher/external-lb/model"
 	"github.com/rancher/external-lb/providers"
+	_ "github.com/rancher/external-lb/providers/elbv2"
 	"os"
 	"reflect"
 	"strconv"
@@ -81,7 +82,7 @@ func setEnv() {
 }
 
 func main() {
-	logrus.Infof("Starting Rancher external load balancer service")
+	logrus.Infof("Starting Rancher External LoadBalancer service")
 	setEnv()
 
 	go startHealthcheck()
@@ -93,9 +94,8 @@ func main() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		newVersion, err := m.GetVersion()
 		update, updateForced := false, false
-
+		newVersion, err := m.GetVersion()
 		if err != nil {
 			logrus.Errorf("Failed to get metadata version: %v", err)
 		} else if version != newVersion {
@@ -147,7 +147,6 @@ func main() {
 
 				metadataLBConfigsCached = metadataLBConfigs
 				lastUpdated = time.Now()
-
 			} else {
 				logrus.Debugf("LB configs from metadata did not change")
 			}
