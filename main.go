@@ -5,7 +5,6 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/rancher/external-lb/metadata"
 	"github.com/rancher/external-lb/providers"
-	_ "github.com/rancher/external-lb/providers/f5"
 	"os"
 	"time"
 )

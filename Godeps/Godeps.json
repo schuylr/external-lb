@@ -19,9 +19,5 @@
 			"ImportPath": "github.com/rancher/go-rancher-metadata/metadata",
 			"Rev": "abd61bf46372e5f25921d716005940017916c091"
 		},
-		{
-			"ImportPath": "github.com/scottdware/go-bigip",
-			"Rev": "47f9a288d982285078ad80951d23a2c3177820e3"
-		}
 	]
 }
