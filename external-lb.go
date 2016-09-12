@@ -4,42 +4,50 @@ import (
 	"fmt"
 	"github.com/Sirupsen/logrus"
 	"github.com/rancher/external-lb/model"
-	"strings"
 )
 
-func UpdateProviderLBConfigs(metadataConfigs map[string]model.LBConfig) error {
+type Op int
+
+const (
+	ADD Op = iota
+	REMOVE
+	UPDATE
+)
+
+func UpdateProviderLBConfigs(metadataConfigs map[string]model.LBConfig) (map[string]model.LBConfig, error) {
 	providerConfigs, err := getProviderLBConfigs()
 	if err != nil {
-		return fmt.Errorf("Provider error reading lb configs: %v", err)
+		return nil, fmt.Errorf("Failed to get LB configs from provider: %v", err)
 	}
-	logrus.Debugf("Rancher LB configs from provider: %v", providerConfigs)
 
 	removeExtraConfigs(metadataConfigs, providerConfigs)
+	updated := addMissingConfigs(metadataConfigs, providerConfigs)
+	updated_ := updateExistingConfigs(metadataConfigs, providerConfigs)
+	for k, v := range updated_ {
+		if _, ok := updated[k]; !ok {
+			updated[k] = v
+		}
+	}
 
-	addMissingConfigs(metadataConfigs, providerConfigs)
-
-	updateExistingConfigs(metadataConfigs, providerConfigs)
-
-	return nil
+	return updated, nil
 }
 
 func getProviderLBConfigs() (map[string]model.LBConfig, error) {
 	allConfigs, err := provider.GetLBConfigs()
 	if err != nil {
-		logrus.Debugf("Error Getting Rancher LB configs from provider: %v", err)
 		return nil, err
 	}
+
 	rancherConfigs := make(map[string]model.LBConfig, len(allConfigs))
-	suffix := "_" + m.EnvironmentUUID + "_" + targetRancherSuffix
-	for _, value := range allConfigs {
-		if strings.HasSuffix(value.LBTargetPoolName, suffix) {
-			rancherConfigs[value.LBEndpoint] = value
-		}
+	for _, config := range allConfigs {
+		rancherConfigs[config.EndpointName] = config
 	}
+
+	logrus.Debugf("LBConfigs from provider: %v", allConfigs)
 	return rancherConfigs, nil
 }
 
-func removeExtraConfigs(metadataConfigs map[string]model.LBConfig, providerConfigs map[string]model.LBConfig) []model.LBConfig {
+func removeExtraConfigs(metadataConfigs, providerConfigs map[string]model.LBConfig) map[string]model.LBConfig {
 	var toRemove []model.LBConfig
 	for key := range providerConfigs {
 		if _, ok := metadataConfigs[key]; !ok {
@@ -50,12 +58,13 @@ func removeExtraConfigs(metadataConfigs map[string]model.LBConfig, providerConfi
 	if len(toRemove) == 0 {
 		logrus.Debug("No LB configs to remove")
 	} else {
-		logrus.Infof("LB configs to remove: %v", toRemove)
+		logrus.Infof("LB configs to remove: %d", len(toRemove))
 	}
-	return updateProvider(toRemove, &Remove)
+
+	return updateProvider(toRemove, REMOVE)
 }
 
-func addMissingConfigs(metadataConfigs map[string]model.LBConfig, providerConfigs map[string]model.LBConfig) []model.LBConfig {
+func addMissingConfigs(metadataConfigs, providerConfigs map[string]model.LBConfig) map[string]model.LBConfig {
 	var toAdd []model.LBConfig
 	for key := range metadataConfigs {
 		if _, ok := providerConfigs[key]; !ok {
@@ -65,47 +74,24 @@ func addMissingConfigs(metadataConfigs map[string]model.LBConfig, providerConfig
 	if len(toAdd) == 0 {
 		logrus.Debug("No LB configs to add")
 	} else {
-		logrus.Infof("LB configs to add: %v", toAdd)
+		logrus.Infof("LB configs to add: %d", len(toAdd))
 	}
-	return updateProvider(toAdd, &Add)
+
+	return updateProvider(toAdd, ADD)
 }
 
-func updateExistingConfigs(metadataConfigs map[string]model.LBConfig, providerConfigs map[string]model.LBConfig) []model.LBConfig {
+func updateExistingConfigs(metadataConfigs, providerConfigs map[string]model.LBConfig) map[string]model.LBConfig {
 	var toUpdate []model.LBConfig
 	for key := range metadataConfigs {
 		if _, ok := providerConfigs[key]; ok {
 			mLBConfig := metadataConfigs[key]
 			pLBConfig := providerConfigs[key]
-			var update bool
 
-			//check that the targetPoolName and targets match
-			if strings.EqualFold(mLBConfig.LBTargetPoolName, pLBConfig.LBTargetPoolName) {
-				if len(mLBConfig.LBTargets) != len(pLBConfig.LBTargets) {
-					update = true
-				}
-				//check if any target have changed
-				for _, mTarget := range mLBConfig.LBTargets {
-					targetExists := false
-					for _, pTarget := range pLBConfig.LBTargets {
-						if pTarget.HostIP == mTarget.HostIP && pTarget.Port == mTarget.Port {
-							targetExists = true
-							break
-						}
-					}
-					if !targetExists {
-						//lb target changed, update the config on provider
-						update = true
-						break
-					}
-				}
-			} else {
-				//targetPool should be changed
-				logrus.Debugf("The LBEndPoint %s  will be updated to map to a new LBTargetPoolName %s", key, mLBConfig.LBTargetPoolName)
-				update = true
-			}
-
-			if update {
+			if !checkEqualFrontends(mLBConfig.Frontends, pLBConfig.Frontends) {
+				logrus.Debugf("LB config for endpoint %s needs to be updated", key)
 				toUpdate = append(toUpdate, metadataConfigs[key])
+			} else {
+				logrus.Debugf("LB config for endpoint %s is already up to date", key)
 			}
 		}
 	}
@@ -113,36 +99,133 @@ func updateExistingConfigs(metadataConfigs map[string]model.LBConfig, providerCo
 	if len(toUpdate) == 0 {
 		logrus.Debug("No LB configs to update")
 	} else {
-		logrus.Infof("LB configs to update: %v", toUpdate)
+		logrus.Infof("LB configs to update: %d", len(toUpdate))
 	}
 
-	return updateProvider(toUpdate, &Update)
+	return updateProvider(toUpdate, UPDATE)
 }
 
-func updateProvider(toChange []model.LBConfig, op *Op) []model.LBConfig {
-	var changed []model.LBConfig
+func updateProvider(toChange []model.LBConfig, op Op) map[string]model.LBConfig {
+	// map of FQDN -> LBConfig
+	updateFqdn := make(map[string]model.LBConfig)
 	for _, value := range toChange {
-		switch *op {
-		case Add:
+		switch op {
+		case ADD:
 			logrus.Infof("Adding LB config: %v", value)
-			if err := provider.AddLBConfig(value); err != nil {
-				logrus.Errorf("Failed to add LB config to provider %v: %v", value, err)
-			} else {
-				changed = append(changed, value)
+			fqdn, err := provider.AddLBConfig(value)
+			if err != nil {
+				logrus.Errorf("Failed to add LB config for endpoint %s: %v", value.EndpointName, err)
+			} else if fqdn != "" {
+				updateFqdn[fqdn] = value
 			}
-		case Remove:
+		case REMOVE:
 			logrus.Infof("Removing LB config: %v", value)
 			if err := provider.RemoveLBConfig(value); err != nil {
-				logrus.Errorf("Failed to remove LB config from provider %v: %v", value, err)
+				logrus.Errorf("Failed to remove LB config for endpoint %s: %v", value.EndpointName, err)
 			}
-		case Update:
+		case UPDATE:
 			logrus.Infof("Updating LB config: %v", value)
-			if err := provider.UpdateLBConfig(value); err != nil {
-				logrus.Errorf("Failed to update LB config to provider %v: %v", value, err)
-			} else {
-				changed = append(changed, value)
+			fqdn, err := provider.UpdateLBConfig(value)
+			if err != nil {
+				logrus.Errorf("Failed to update LB config for endpoint %s: %v", value.EndpointName, err)
+			} else if fqdn != "" {
+				updateFqdn[fqdn] = value
 			}
 		}
 	}
-	return changed
+
+	return updateFqdn
+}
+
+func checkEqualFrontends(x, y []model.LBFrontend) bool {
+	if len(x) != len(y) {
+		return false
+	}
+
+	// create a map of port->frontend
+	diff := make(map[int64]model.LBFrontend, len(x))
+	for _, feX := range x {
+		diff[feX.Port] = feX
+	}
+
+	for _, feY := range y {
+		// if there is no frontend with matching port, bail out early
+		if _, ok := diff[feY.Port]; !ok {
+			return false
+		}
+
+		// check if frontend properties have changed
+		feX := diff[feY.Port]
+		if feX.Protocol != feY.Protocol || feX.Certificate != feY.Certificate {
+			return false
+		}
+
+		if !checkEqualTargetPools(feX.TargetPools, feY.TargetPools) {
+			return false
+		}
+
+		delete(diff, feY.Port)
+	}
+
+	if len(diff) == 0 {
+		return true
+	}
+
+	return false
+}
+
+func checkEqualTargetPools(x, y []model.LBTargetPool) bool {
+	if len(x) != len(y) {
+		return false
+	}
+
+	// create a map of name->target pool
+	diff := make(map[string]model.LBTargetPool, len(x))
+	for _, tpX := range x {
+		diff[tpX.Name] = tpX
+	}
+
+	for _, tpY := range y {
+		// if there is no target pool with matching name, bail out early
+		if _, ok := diff[tpY.Name]; !ok {
+			return false
+		}
+
+		// check if target pool properties have changed
+		tpX := diff[tpY.Name]
+		if tpX.Port != tpY.Port || tpX.Protocol != tpY.Protocol ||
+			tpX.PathPattern != tpY.PathPattern || tpX.StickySessions != tpY.StickySessions {
+			return false
+		}
+
+		// check if target IPs have changed
+		if len(tpX.TargetIPs) != len(tpY.TargetIPs) {
+			return false
+		}
+
+		diff2 := make(map[string]bool, len(tpX.TargetIPs))
+		for _, ip := range tpX.TargetIPs {
+			diff2[ip] = true
+		}
+
+		for _, ip := range tpY.TargetIPs {
+			if _, ok := diff2[ip]; !ok {
+				return false
+			}
+
+			delete(diff2, ip)
+		}
+
+		if len(diff2) != 0 {
+			return false
+		}
+
+		delete(diff, tpY.Name)
+	}
+
+	if len(diff) == 0 {
+		return true
+	}
+
+	return false
 }

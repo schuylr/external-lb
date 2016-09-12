@@ -1,15 +1,15 @@
-external-lb
+external-lb (advanced branch)
 ==========
-Rancher service facilitating integration of rancher with external load balancers. This service updates external LB with services created in Rancher that ask to be load balanced using an external LB. 
-Initial version comes with f5 BIG-IP support; but a pluggable provider model makes it easy to implement other providers later.
+Rancher service facilitating integration of rancher with external load balancer providers. This service creates and manages external load balancers to load balance services created in Rancher.
+Initial version supports AWS ELB Application Load Balancer; but a pluggable provider model makes it easy to implement other providers later.
 
 Design
 ==========
-* The external-lb gets deployed as a Rancher service containerized app. 
+* Gets deployed as a Rancher service containerized app. 
 
-* It enables any other service to be registered to external LB if the service has exposed a public port and has the label 'io.rancher.service.external_lb_endpoint'
+* Any service that should be load balanced by an external provider must have exposed a public port and the label 'io.rancher.service.external_lb.endpoint'
 
-* Value of this label should be equal to the external LB endpoint that should be used for this service - example the VirtualServer Name for f5 BIG-IP
+* The value of this label should should be a valid name that can be used to create a new load balancer on the provider side.
 
 * The external-lb service will fetch info from rancher-metadata server at a periodic interval, then compare it with the data returned by the LB provider, and propagate the changes to the LB provider.
 
@@ -22,7 +22,7 @@ Or just [click here](//github.com/rancher/rancher/issues/new?title=%5Brancher-dn
 
 License
 =======
-Copyright (c) 2015 [Rancher Labs, Inc.](http://rancher.com)
+Copyright (c) 2016 [Rancher Labs, Inc.](http://rancher.com)
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

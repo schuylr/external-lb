@@ -25,7 +25,7 @@ func healthcheck(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "Failed to reach metadata server", http.StatusInternalServerError)
 	} else {
 		// 2) test provider
-		err := provider.TestConnection()
+		err := provider.HealthCheck()
 		if err != nil {
 			logrus.Errorf("Healthcheck failed: unable to reach a provider, error:%v", err)
 			http.Error(w, "Failed to reach an external provider ", http.StatusInternalServerError)
