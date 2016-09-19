@@ -829,7 +829,7 @@ func (svc *ELBService) DeleteTargetGroup(targetGroupArn string) error {
 	}
 	_, err := svc.elbv2c.DeleteTargetGroup(params)
 	if err != nil && !IsAWSErr(err, AWSErrTargetGroupNotFound) {
-		return fmt.Errorf("DeleteTargetGroup SDK error: %v", err)
+		return err
 	}
 
 	return nil

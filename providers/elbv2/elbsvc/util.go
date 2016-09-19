@@ -19,6 +19,7 @@ const (
 	AWSErrDependendyViolation    = "DependencyViolation"
 	AWSErrDryRunOperation        = "DryRunOperation"
 	AWSErrLoadBalancerNotFound   = "LoadBalancerNotFound"
+	AWSErrResourceInUse          = "ResourceInUse"
 )
 
 func IPPermsAuthorizeSecurityGroupIngress(securityGroupID string, fromPort, toPort int64) []*ec2.IpPermission {

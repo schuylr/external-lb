@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -489,18 +490,43 @@ func (p *AWSELBv2Provider) RemoveLBConfig(config model.LBConfig) error {
 	targetGroups = removeDuplicates(targetGroups)
 
 	// TODO: do i really need to delete the rules explicitely?
-	for _, arn := range rules {
+	/*	for _, arn := range rules {
 		err := p.svc.DeleteListenerRule(arn)
 		if err != nil {
 			logrus.Error(err)
 		}
+	}*/
+
+	// Deal with that eventual consistency:
+	// Removing target groups may result in
+	// ResourceInUse errors initially.
+	tries := 0
+	for tries < 5 {
+		for i := len(targetGroups) - 1; i >= 0; i-- {
+			arn := targetGroups[i]
+			if err := p.svc.DeleteTargetGroup(arn); err != nil {
+				if elbsvc.IsAWSErr(err, elbsvc.AWSErrResourceInUse) {
+					logrus.Debug("Ignoring ResourceInUse error while cleaning up target group")
+				} else {
+					logrus.Warn(err)
+				}
+				continue
+			}
+
+			targetGroups = append(targetGroups[:i], targetGroups[i+1:]...)
+		}
+
+		if len(targetGroups) == 0 {
+			break
+		}
+
+		time.Sleep(2 * time.Second)
+		tries++
 	}
 
-	for _, arn := range targetGroups {
-		err := p.svc.DeleteTargetGroup(arn)
-		if err != nil {
-			logrus.Error(err)
-		}
+	if len(targetGroups) != 0 {
+		logrus.Warnf("Failed to remove all target groups for ELB %s. "+
+			"You may want to manually remove them.", config.EndpointName)
 	}
 
 	// get the load balancer security group ID
@@ -521,7 +547,7 @@ func (p *AWSELBv2Provider) RemoveLBConfig(config model.LBConfig) error {
 			logrus.Infof("Started background cleaning job for load balancer '%s'", config.EndpointName)
 
 			if err := p.svc.WaitELBInterfacesRemoved(lbInfo.LoadBalancerArn); err != nil {
-				logrus.Warnf("While waiting for load balancer interfaces to be removed: %s", err.Error())
+				logrus.Warnf("While waiting for ELB interfaces to be removed: %s", err.Error())
 			}
 
 			// delete the security group
@@ -532,10 +558,10 @@ func (p *AWSELBv2Provider) RemoveLBConfig(config model.LBConfig) error {
 					logrus.Error(err)
 				}
 
-				logrus.Warnf("Failed to remove load balancer security group. "+
-					"You may want to delete the unused group manually: %s", sgId)
+				logrus.Warnf("Failed to remove ELB security group. You "+
+					"may want to manually remove this group: %s", sgId)
 			} else {
-				logrus.Infof("Finished background cleaning job for load balancer '%s'", config.EndpointName)
+				logrus.Infof("Finished background cleaning job for ELB '%s'", config.EndpointName)
 			}
 		}()
 	}
