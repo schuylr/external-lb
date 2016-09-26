@@ -24,10 +24,7 @@ const (
 	serviceLabelBackendProtocol    = "io.rancher.service.external_lb.backend_protocol"
 	serviceLabelBackendPort        = "io.rancher.service.external_lb.backend_port"
 	serviceLabelBackendStickiness  = "io.rancher.service.external_lb.backend_stickiness"
-
-	// TODO:
-	// - use Rancher health check info from metadata to set the default health check path.
-	// - add label io.rancher.service.external_lb.backend_healthcheck_path
+	serviceLabelHealthCheckPort    = "io.rancher.service.external_lb.health_check_port"
 )
 
 const (
@@ -171,9 +168,7 @@ func (m *MetadataClient) GetMetadataLBConfigs() (map[string]model.LBConfig, erro
 
 		var stickiness bool
 		if val, ok := service.Labels[serviceLabelBackendStickiness]; ok {
-			if boolValue, err := strconv.ParseBool(val); err == nil {
-				stickiness = boolValue
-			} else {
+			if stickiness, err = strconv.ParseBool(val); err != nil {
 				logrus.Errorf("Skipping LB configuration for service %s: "+
 					"Could not parse value of label '%s' to boolean: %v",
 					service.Name, serviceLabelBackendStickiness, err)
@@ -202,22 +197,31 @@ func (m *MetadataClient) GetMetadataLBConfigs() (map[string]model.LBConfig, erro
 		}
 
 		var backendPort int64
-		if intVal, err := strconv.ParseInt(portString, 10, 0); err == nil {
-			backendPort = intVal
-		} else {
+		if backendPort, err = strconv.ParseInt(portString, 10, 0); err != nil {
 			logrus.Errorf("Skipping LB configuration for service %s: "+
 				"Could not parse backend port spec '%s' to integer: %v",
 				service.Name, portString, err)
 			continue
 		}
 
+		healthCheckPort := backendPort
+		if val, ok := service.Labels[serviceLabelHealthCheckPort]; ok {
+			if healthCheckPort, err = strconv.ParseInt(val, 10, 32); err != nil {
+				logrus.Errorf("Skipping LB configuration for service %s: "+
+					"Could not parse value of label '%s' to integer: %v",
+					service.Name, serviceLabelHealthCheckPort, err)
+				continue
+			}
+		}
+
 		targetPoolName := service.Name + "_" + service.StackName + "_" + m.EnvironmentUUID
 		targetPool := model.LBTargetPool{
-			Name:           targetPoolName,
-			Protocol:       backendProtocol,
-			Port:           backendPort,
-			PathPattern:    pathPattern,
-			StickySessions: stickiness,
+			Name:            targetPoolName,
+			Protocol:        backendProtocol,
+			Port:            backendPort,
+			PathPattern:     pathPattern,
+			StickySessions:  stickiness,
+			HealthCheckPort: healthCheckPort,
 		}
 
 		// populate the target pool with the target IPs

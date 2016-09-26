@@ -14,7 +14,10 @@ import (
 	"github.com/rancher/external-lb/providers/elbv2/elbsvc"
 )
 
-const ProviderName = "AWS Application Load Balancer"
+const (
+	ProviderName = "AWS Application Load Balancer"
+	ProviderSlug = "elbv2"
+)
 
 const (
 	TagTargetPoolName       = "target-pool-name"
@@ -36,15 +39,16 @@ const (
 )
 
 const (
-	EnvVarAWSAccessKey = "ELBV2_AWS_ACCESS_KEY"
-	EnvVarAWSSecretKey = "ELBV2_AWS_SECRET_KEY"
-	EnvVarAWSRegion    = "ELBV2_AWS_REGION"
-	EnvVarAWSVpcID     = "ELBV2_AWS_VPCID"
-	EnvVarLogsS3       = "ELBV2_LOGS_S3_ENABLED"
-	EnvVarLogsS3Bucket = "ELBV2_LOGS_S3_BUCKET"
-	EnvVarLogsS3Prefix = "ELBV2_LOGS_S3_PREFIX"
-	EnvVarIdleTimeout  = "ELBV2_IDLE_TIMEOUT"
-	EnvVarUsePrivateIP = "ELBV2_USE_PRIVATE_IP"
+	EnvVarAWSAccessKey      = "ELBV2_AWS_ACCESS_KEY"
+	EnvVarAWSSecretKey      = "ELBV2_AWS_SECRET_KEY"
+	EnvVarAWSRegion         = "ELBV2_AWS_REGION"
+	EnvVarAWSVpcID          = "ELBV2_AWS_VPCID"
+	EnvVarUsePrivateIP      = "ELBV2_USE_PRIVATE_IP"
+	EnvVarAccessLogsEnabled = "ELBV2_ACCESS_LOGS_ENABLED"
+	EnvVarAccessLogsBucket  = "ELBV2_ACCESS_LOGS_BUCKET"
+	EnvVarAccessLogsPrefix  = "ELBV2_ACCESS_LOGS_PREFIX"
+	EnvVarConnectionTimeout = "ELBV2_CONNECTION_TIMEOUT"
+	EnvVarDrainingTimeout   = "ELBV2_DRAINING_TIMEOUT"
 )
 
 // AWSELBv2Provider implements the providers.Provider interface.
@@ -57,16 +61,18 @@ type AWSELBv2Provider struct {
 	ipToInstance map[string]*elbsvc.EC2Instance
 }
 
-// ELBOptions specifies global options for the load balancers
+// ELBOptions specifies global options for
+// all of the created load balancers
 type ELBOptions struct {
-	accessLogsS3       bool
-	accessLogsS3Bucket string
-	accessLogsS3Prefix string
-	idleTimeoutSeconds int
+	accessLogsEnabled  bool
+	accessLogsBucket   string
+	accessLogsPrefix   string
+	idleTimeoutSeconds int // range: 1-3600
+	drainingTimeout    int // range: 0-3600
 }
 
 func init() {
-	providers.RegisterProvider("elbv2", new(AWSELBv2Provider))
+	providers.RegisterProvider(ProviderSlug, new(AWSELBv2Provider))
 }
 
 func (p *AWSELBv2Provider) Init() error {
@@ -76,23 +82,27 @@ func (p *AWSELBv2Provider) Init() error {
 
 	p.region = os.Getenv(EnvVarAWSRegion)
 	p.vpcID = os.Getenv(EnvVarAWSVpcID)
-	p.options.accessLogsS3Bucket = os.Getenv(EnvVarLogsS3Bucket)
-	p.options.accessLogsS3Prefix = os.Getenv(EnvVarLogsS3Prefix)
+	p.options.accessLogsBucket = os.Getenv(EnvVarAccessLogsBucket)
+	p.options.accessLogsPrefix = os.Getenv(EnvVarAccessLogsPrefix)
 	p.ipToInstance = make(map[string]*elbsvc.EC2Instance)
 
-	if env := os.Getenv(EnvVarLogsS3); len(env) > 0 {
-		p.options.accessLogsS3, err = strconv.ParseBool(env)
+	if env := os.Getenv(EnvVarAccessLogsEnabled); len(env) > 0 {
+		p.options.accessLogsEnabled, err = strconv.ParseBool(env)
 		if err != nil {
 			return fmt.Errorf("'%s' must be set to a string "+
-				"representing a boolean value", EnvVarLogsS3)
+				"representing a boolean value", EnvVarAccessLogsEnabled)
 		}
 	}
 
-	if env := os.Getenv(EnvVarIdleTimeout); len(env) > 0 {
+	p.options.idleTimeoutSeconds = 60 // default connection timeout
+	if env := os.Getenv(EnvVarConnectionTimeout); len(env) > 0 {
 		p.options.idleTimeoutSeconds, err = strconv.Atoi(env)
 		if err != nil {
 			return fmt.Errorf("'%s' must be set to as string "+
-				"representing an integer value", EnvVarIdleTimeout)
+				"representing an integer value", EnvVarConnectionTimeout)
+		}
+		if 1 > p.options.idleTimeoutSeconds || p.options.idleTimeoutSeconds > 3600 {
+			return fmt.Errorf("'%s' must have a value within the range of 1-3600", EnvVarConnectionTimeout)
 		}
 	}
 
@@ -293,14 +303,14 @@ func (p *AWSELBv2Provider) AddLBConfig(config model.LBConfig) (string, error) {
 	newLb := &elbsvc.NewLoadBalancer{
 		Name: config.EndpointName,
 		// TODO: internal load balancers
-		Scheme:              elbsvc.ELBSchemeInternet,
-		SecurityGroup:       securityGroupId,
-		Subnets:             subnets,
-		Tags:                tags,
-		AccessLogsS3Enabled: p.options.accessLogsS3,
-		AccessLogsS3Bucket:  p.options.accessLogsS3Bucket,
-		AccessLogsS3Prefix:  p.options.accessLogsS3Prefix,
-		IdleTimoutSeconds:   p.options.idleTimeoutSeconds,
+		Scheme:            elbsvc.ELBSchemeInternet,
+		SecurityGroup:     securityGroupId,
+		Subnets:           subnets,
+		Tags:              tags,
+		AccessLogsEnabled: p.options.accessLogsEnabled,
+		AccessLogsBucket:  p.options.accessLogsBucket,
+		AccessLogsPrefix:  p.options.accessLogsPrefix,
+		IdleTimoutSeconds: p.options.idleTimeoutSeconds,
 	}
 
 	lbInfo, err := p.svc.CreateLoadBalancer(newLb)
@@ -333,7 +343,7 @@ func (p *AWSELBv2Provider) UpdateLBConfig(config model.LBConfig) (string, error)
 		return "", fmt.Errorf("Could not find ELBv2 load balancer named %s", config.EndpointName)
 	}
 
-	// There should be at least one frontend
+	// there should be at least one frontend
 	if len(config.Frontends) == 0 {
 		return "", fmt.Errorf("Can not create LB without any frontends")
 	}
@@ -497,8 +507,8 @@ func (p *AWSELBv2Provider) RemoveLBConfig(config model.LBConfig) error {
 		}
 	}*/
 
-	// Deal with that eventual consistency:
-	// Removing target groups may result in
+	// deal with that eventual consistency:
+	// removing target groups may result in
 	// ResourceInUse errors initially.
 	tries := 0
 	for tries < 5 {
@@ -999,7 +1009,8 @@ func (p *AWSELBv2Provider) createBackend(loadBalancerName string, targetPool mod
 		TagOwner:                TagOwnerValue,
 	}
 
-	tgArn, err := p.svc.EnsureTargetGroup(name, targetPool.Protocol, "/", targetPool.Port, tags, targetPool.StickySessions)
+	tgArn, err := p.svc.EnsureTargetGroup(name, targetPool.Protocol, targetPool.Port, targetPool.HealthCheckPort,
+		tags, targetPool.StickySessions, p.options.drainingTimeout)
 	if err != nil {
 		return "", fmt.Errorf("Failed to ensure target group %s: %v", name, err)
 	}
@@ -1055,7 +1066,7 @@ func (p *AWSELBv2Provider) ensurePlaceholderTargetGroup(loadBalancerName string,
 		TagLoadBalancerRelation: loadBalancerName,
 		TagOwner:                TagOwnerValue,
 	}
-	tgArn, err := p.svc.CreateTargetGroup(name, "HTTP", "/", int64(80), tags, false)
+	tgArn, err := p.svc.CreateTargetGroup(name, "HTTP", int64(80), int64(0), tags, false, 0)
 	if err != nil {
 		return "", fmt.Errorf("Failed to create placeholder target group %s: %v", name, err)
 	}

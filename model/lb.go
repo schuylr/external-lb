@@ -34,4 +34,8 @@ type LBTargetPool struct {
 	// Whether to enable sticky sessions
 	// for this target pool.
 	StickySessions bool
+	// Port that should be used to perform
+	// health checks on the targets. Defaults
+	// to target port.
+	HealthCheckPort int64
 }

@@ -194,7 +194,8 @@ func checkEqualTargetPools(x, y []model.LBTargetPool) bool {
 		// check if target pool properties have changed
 		tpX := diff[tpY.Name]
 		if tpX.Port != tpY.Port || tpX.Protocol != tpY.Protocol ||
-			tpX.PathPattern != tpY.PathPattern || tpX.StickySessions != tpY.StickySessions {
+			tpX.PathPattern != tpY.PathPattern || tpX.StickySessions != tpY.StickySessions ||
+			tpX.HealthCheckPort != tpY.HealthCheckPort {
 			return false
 		}
 

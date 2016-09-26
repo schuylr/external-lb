@@ -24,8 +24,9 @@ Configuration Labels
 | io.rancher.service.external_lb.frontend_ssl_cert | The ARN of a SSL certificate in AWS Certificate Manager or AWS IAM. Required if protocol is set to HTTPS. | `-` |
 | io.rancher.service.external_lb.backend_path_pattern | The path pattern to match in order to forward traffic to this service. If the label is omitted, the service will become the default target of the listener and all requests that don't match the path pattern of any other service will be forwarded to it. | `-` |
 | io.rancher.service.external_lb.backend_protocol | The protocol to use when forwarding traffic to this service. | `HTTP` |
-| io.rancher.service.external_lb.backend_port | The port to use when forwarding traffic to this service. It defaults to the first exposed port of the service. | `<Ports[0]>` |
-| io.rancher.service.external_lb.backend_stickiness | To enable sticky sessions for this service, set this to 'true'. | `false` |
+| io.rancher.service.external_lb.backend_port | The port to use when forwarding traffic to this service. Defaults to the first exposed port of the service. | `<Ports[0]>` |
+| io.rancher.service.external_lb.backend_stickiness | Set to 'true' in order to enable sticky sessions for this service. | `false` |
+| io.rancher.service.external_lb.health_check_port | The port ELB should use when performing health checks on the targets of this service. The default is to use the traffic backend port. Health checks are HTTP requests using the path `'/'` and expecting a HTTP 200 code in the response. | `-` |
 
 Note: The only label required to create a fully working ELB Application Load Balancer for a service in Rancher is `io.rancher.service.external_lb.endpoint`. The other labels are optional.
 
@@ -38,13 +39,13 @@ The following environment variables are used to configure global options for thi
 |----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------|
 | ELBV2_AWS_ACCESS_KEY | Your AWS Access Key. Make sure this key has sufficient permissions for the operations required to manage an ELB load balancer. | `-` |
 | ELBV2_AWS_SECRET_KEY | Your AWS Secret Key. | `-` |
-| ELBV2_AWS_REGION | By default the load balancer will be created in the region of the instance this service is running on. You can override the region by setting this variable. | `<Self-Region>` |
-| ELBV2_AWS_VPCID | By default the load balancer will be created in the VPC of the instance this service is running on. You can override the VPC by setting this variable to the VPC ID to use. | `<Self-VPC>` |
-| ELBV2_USE_PRIVATE_IP | If your EC2 instances are registered in Rancher with their private IP addresses, then set this variable to "true". | `false` |
-| ELBV2_IDLE_TIMEOUT | Global setting for the connection idle timeout in seconds for any load balancer created by this service. Valid range: 1-3600. | `60` |
-| ELBV2_LOGS_S3_ENABLED | Enables access logging for the load balancers. Logs are stored in the specified Amazon S3 bucket. | `false` |
-| ELBV2_LOGS_S3_BUCKET | The name of the S3 bucket to store the access logs in. It must be located in the same region as the load balancer and must have a bucket policy granting ELB permissions to write. | `-` |
-| ELBV2_LOGS_S3_PREFIX | The prefix in the bucket. By default the logs are placed at the root level of the bucket. | `-` |
+| ELBV2_AWS_REGION | By default the load balancer will be created in the region of the instance this service is running on. You can override the region by setting this variable. | `-` |
+| ELBV2_AWS_VPCID | By default the load balancer will be created in the VPC of the instance this service is running on. You can override the VPC by setting this variable to the VPC ID to use. | `-` |
+| ELBV2_USE_PRIVATE_IP | If your EC2 instances are registered in Rancher with their private IP addresses, then set this variable to `true`. | `false` |
+| ELBV2_CONNECTION_TIMEOUT | The connection idle timeout in seconds for the load balancers. Valid range: 1-3600. | `60` |
+| ELBV2_ACCESS_LOGS_ENABLED | Set this to `true` to enable access logging for the load balancers. Logs are stored in the specified S3 bucket. | `false` |
+| ELBV2_ACCESS_LOGS_BUCKET | The name of the S3 bucket to store the access logs in. It must be located in the same region as the load balancer and have a bucket policy granting ELB write permissions. | `-` |
+| ELBV2_ACCESS_LOGS_PREFIX | An optional S3 bucket prefix. If not specified the logs are stored in the root of the bucket. | `-` |
 
 Note: Instead of specifying AWS credentials as environment variables you can create an IAM policy and role and associate it with your EC2 instances.
 

@@ -36,14 +36,14 @@ type NewLoadBalancer struct {
 	// Tags to assign to the load balancer.
 	Tags map[string]string
 	// Enable storing of access logs in Amazon S3.
-	AccessLogsS3Enabled bool
+	AccessLogsEnabled bool
 	// The name of the S3 bucket for the access logs. The bucket must exist in
 	// the same region as the load balancer and have a bucket policy that grants
 	// Elastic Load Balancing permission to write to the bucket.
-	AccessLogsS3Bucket string
+	AccessLogsBucket string
 	// The optional prefix for the location in the S3 bucket.
-	AccessLogsS3Prefix string
-	// The idle timeout of the load balancer in seconds.
+	AccessLogsPrefix string
+	// The idle timeout of the load balancer in seconds. (range: 1-3600, default: 60)
 	IdleTimoutSeconds int
 }
 
@@ -109,8 +109,10 @@ type Backend struct {
 	Instances []string
 	// The path pattern to match for requests to be forwarded to this backend.
 	PathPattern string
-	// Whether Sticky Sessions are enabled for this target group.
+	// Whether Sticky Sessions are enabled for this target group (default: false).
 	StickySessions bool
+	// The port the load balancer uses when performing health checks on targets.
+	HealthCheckPort int64
 }
 
 /*
@@ -280,7 +282,7 @@ func (svc *ELBService) GetLoadBalancerListeners(loadBalancerArn string) ([]*List
 			if *r.IsDefault {
 				priority = int64(0)
 			} else {
-				priority, err = strconv.ParseInt(*r.Priority, 10, 64)
+				priority, err = strconv.ParseInt(*r.Priority, 10, 32)
 				if err != nil {
 					return listeners, fmt.Errorf("While parsing rule priority to integer: %v", err)
 				}
@@ -335,6 +337,11 @@ func (svc *ELBService) GetLoadBalancerListeners(loadBalancerArn string) ([]*List
 				be.BackendProtocol = *tg.Protocol
 				be.BackendPort = *tg.Port
 				be.TargetGroupName = *tg.TargetGroupName
+				checkPort, err := strconv.ParseInt(*tg.HealthCheckPort, 10, 32)
+				if err != nil {
+					return nil, fmt.Errorf("While parsing HealthCheckPort: %v", err)
+				}
+				be.HealthCheckPort = checkPort
 			}
 
 			if elbTags, ok := arnToTags[be.TargetGroupArn]; ok {
@@ -349,11 +356,11 @@ func (svc *ELBService) GetLoadBalancerListeners(loadBalancerArn string) ([]*List
 				be.Instances = ids
 			}
 
-			sticky, err := svc.GetTargetGroupStickiness(be.TargetGroupArn)
+			stickiness, _, err := svc.GetTargetGroupAttributes(be.TargetGroupArn)
 			if err != nil {
 				return nil, err
 			}
-			be.StickySessions = sticky
+			be.StickySessions = stickiness
 		}
 
 		listener.Backends = backends
@@ -427,9 +434,9 @@ func (svc *ELBService) CreateLoadBalancer(newLb *NewLoadBalancer) (*LoadBalancer
 		LoadBalancerArn: aws.String(lbInfo.LoadBalancerArn),
 	}
 
-	if newLb.AccessLogsS3Enabled && newLb.AccessLogsS3Bucket != "" {
+	if newLb.AccessLogsEnabled && newLb.AccessLogsBucket != "" {
 		logrus.Debugf("Enabling access logs for ELB %s using S3 bucket %s",
-			newLb.Name, newLb.AccessLogsS3Bucket)
+			newLb.Name, newLb.AccessLogsBucket)
 		attributes := []*elbv2.LoadBalancerAttribute{
 			{
 				Key:   aws.String("access_logs.s3.enabled"),
@@ -437,11 +444,11 @@ func (svc *ELBService) CreateLoadBalancer(newLb *NewLoadBalancer) (*LoadBalancer
 			},
 			{
 				Key:   aws.String("access_logs.s3.bucket"),
-				Value: aws.String(newLb.AccessLogsS3Bucket),
+				Value: aws.String(newLb.AccessLogsBucket),
 			},
 			{
 				Key:   aws.String("access_logs.s3.prefix"),
-				Value: aws.String(newLb.AccessLogsS3Prefix),
+				Value: aws.String(newLb.AccessLogsPrefix),
 			},
 		}
 		params2.Attributes = append(params2.Attributes, attributes...)
@@ -759,8 +766,8 @@ func (svc *ELBService) SetListenerCertificate(listenerArn, certificateArn string
 
 // EnsureTargetGroup creates a new target group with the specified parameters in the service's VPC
 // while overwriting any existing group by that name. It returns the ARN of the target group.
-func (svc *ELBService) EnsureTargetGroup(name, protocol, healthCheckPath string, port int64,
-	tags map[string]string, stickySessions bool) (string, error) {
+func (svc *ELBService) EnsureTargetGroup(name, protocol string, port, checkPort int64,
+	tags map[string]string, stickySessions bool, drainingTimeout int) (string, error) {
 	logrus.Debugf("EnsureTargetGroup => name: %s port: %d protocol: %s tags: %v",
 		name, port, protocol, tags)
 
@@ -776,23 +783,27 @@ func (svc *ELBService) EnsureTargetGroup(name, protocol, healthCheckPath string,
 		}
 	}
 
-	return svc.CreateTargetGroup(name, protocol, healthCheckPath, port, tags, stickySessions)
+	return svc.CreateTargetGroup(name, protocol, port, checkPort, tags, stickySessions, drainingTimeout)
 }
 
 // CreateTargetGroup creates a new target group with the specified parameters in the service's VPC.
 // It returns the ARN of the target group.
-func (svc *ELBService) CreateTargetGroup(name, protocol, healthCheckPath string, port int64,
-	tags map[string]string, stickySessions bool) (string, error) {
+func (svc *ELBService) CreateTargetGroup(name, protocol string, port, checkPort int64,
+	tags map[string]string, stickySessions bool, drainingTimeout int) (string, error) {
 	logrus.Debugf("createTargetGroup => name: %s port: %d protocol: %s tags: %v",
 		name, port, protocol, tags)
 
 	params := &elbv2.CreateTargetGroupInput{
-		Name:            aws.String(name),
-		Port:            aws.Int64(port),
-		Protocol:        aws.String(protocol),
-		VpcId:           aws.String(svc.vpcID),
-		HealthCheckPath: aws.String(healthCheckPath),
+		Name:     aws.String(name),
+		Port:     aws.Int64(port),
+		Protocol: aws.String(protocol),
+		VpcId:    aws.String(svc.vpcID),
 	}
+
+	if checkPort > 0 {
+		params.HealthCheckPort = aws.String(fmt.Sprintf("%d", checkPort))
+	}
+
 	resp, err := svc.elbv2c.CreateTargetGroup(params)
 	if err != nil {
 		return "", fmt.Errorf("CreateTargetGroup SDK error: %v", err)
@@ -810,11 +821,8 @@ func (svc *ELBService) CreateTargetGroup(name, protocol, healthCheckPath string,
 		}
 	}
 
-	if stickySessions {
-		err := svc.SetTargetGroupStickiness(arn, true)
-		if err != nil {
-			return "", err
-		}
+	if err := svc.SetTargetGroupAttributes(arn, stickySessions, drainingTimeout); err != nil {
+		return "", err
 	}
 
 	return arn, nil
@@ -948,16 +956,21 @@ func (svc *ELBService) describeRegisteredTargets(targetGroupArn string) ([]*elbv
 	return ret, nil
 }
 
-// SetTargetGroupStickiness sets the stickiness attribute for the specified target group.
-func (svc *ELBService) SetTargetGroupStickiness(targetGroupArn string, stickiness bool) error {
-	logrus.Debugf("SetTargetGroupStickiness => targetGroupArn: %s, stickiness %t",
-		targetGroupArn, stickiness)
+// SetTargetGroupAttributes sets the stickiness and draining delay
+// attributes for the specified target group.
+func (svc *ELBService) SetTargetGroupAttributes(targetGroupArn string, stickiness bool, drainingTimeout int) error {
+	logrus.Debugf("SetTargetGroupAttributes => targetGroupArn: %s, stickiness %t, draining %d",
+		targetGroupArn, stickiness, drainingTimeout)
 
 	params := &elbv2.ModifyTargetGroupAttributesInput{
 		Attributes: []*elbv2.TargetGroupAttribute{
 			{
 				Key:   aws.String("stickiness.enabled"),
 				Value: aws.String(fmt.Sprintf("%t", stickiness)),
+			},
+			{
+				Key:   aws.String("deregistration_delay.timeout_seconds"),
+				Value: aws.String(fmt.Sprintf("%d", drainingTimeout)),
 			},
 		},
 		TargetGroupArn: aws.String(targetGroupArn),
@@ -970,31 +983,38 @@ func (svc *ELBService) SetTargetGroupStickiness(targetGroupArn string, stickines
 	return nil
 }
 
-// GetTargetGroupStickiness checks whether the stickiness attribute is enabled for the
-// specified target group.
-func (svc *ELBService) GetTargetGroupStickiness(targetGroupArn string) (bool, error) {
-	logrus.Debugf("GetTargetGroupStickiness => targetGroupArn: %s", targetGroupArn)
+// GetTargetGroupAttributes returns the boolean value for the stickiness and the
+// integer value for the draining timeout attribute of the specified target group.
+func (svc *ELBService) GetTargetGroupAttributes(targetGroupArn string) (bool, int, error) {
+	logrus.Debugf("GetTargetGroupAttributes => targetGroupArn: %s", targetGroupArn)
 
 	params := &elbv2.DescribeTargetGroupAttributesInput{
 		TargetGroupArn: aws.String(targetGroupArn),
 	}
 	resp, err := svc.elbv2c.DescribeTargetGroupAttributes(params)
 	if err != nil {
-		return false, fmt.Errorf("DescribeTargetGroupAttributes SDK error: %v", err)
+		return false, 0, fmt.Errorf("DescribeTargetGroupAttributes SDK error: %v", err)
 	}
 
-	stickiness := false
+	var stickiness bool
+	var drainingTimeout int
+
 	for _, a := range resp.Attributes {
-		if *a.Key == "stickiness.enabled" {
+		switch *a.Key {
+		case "stickiness.enabled":
 			stickiness, err = strconv.ParseBool(*a.Value)
 			if err != nil {
-				return false, fmt.Errorf("Could not parse stickiness attribute to boolean: %v", err)
+				return false, 0, fmt.Errorf("Could not parse stickiness attribute to boolean: %v", err)
 			}
-			break
+		case "deregistration_delay.timeout_seconds":
+			drainingTimeout, err = strconv.Atoi(*a.Value)
+			if err != nil {
+				return false, 0, fmt.Errorf("Could not parse draining delay attribute to integer: %v", err)
+			}
 		}
 	}
 
-	return stickiness, nil
+	return stickiness, drainingTimeout, nil
 }
 
 // RegisterInstances registers the specified instances with the specified target group.
