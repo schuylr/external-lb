@@ -19,6 +19,7 @@ Configuration Labels
 | Label | Description | Default value |
 |-----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
 | io.rancher.service.external_lb.endpoint | The name of the ELBv2 load balancer to create and manage. The name must not be in use by an existing ELBv2 in your AWS account. It must consist of only alphanumeric characters or dashes and not be longer than 32 characters.  | `-` |
+| io.rancher.service.external_lb.region | The region of the ELBv2 load balancer to create and manage. There must be a manager in the same region to create this ELB. | `""` |
 | io.rancher.service.external_lb.frontend_protocol | The protocol to use for the listener. Valid values: "HTTP", "HTTPS" | `HTTP` |
 | io.rancher.service.external_lb.frontend_port | The port to use for the listener. | `80` |
 | io.rancher.service.external_lb.frontend_ssl_cert | The ARN of a SSL certificate in AWS Certificate Manager or AWS IAM. Required if protocol is set to HTTPS. | `-` |
