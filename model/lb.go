@@ -2,6 +2,7 @@ package model
 
 type LBConfig struct {
 	EndpointName string
+	AwsRegion 	 string
 	Frontends    []LBFrontend
 }
 

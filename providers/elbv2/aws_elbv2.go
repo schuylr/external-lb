@@ -178,6 +178,10 @@ func (p *AWSELBv2Provider) GetLBConfigs() ([]model.LBConfig, error) {
 	}
 
 	for _, lb := range loadBalancers {
+		// ignore load balancers that aren't in the same region
+		if lb.AwsRegion != "" && lb.AwsRegion != p.region {
+			continue;
+		}
 		var frontends []model.LBFrontend
 		for _, listener := range lb.Listeners {
 			var targetPools []model.LBTargetPool
@@ -224,6 +228,7 @@ func (p *AWSELBv2Provider) GetLBConfigs() ([]model.LBConfig, error) {
 
 		lbConfig := model.LBConfig{
 			EndpointName: lb.Name,
+			AwsRegion:		lb.AwsRegion,
 			Frontends:    frontends,
 		}
 

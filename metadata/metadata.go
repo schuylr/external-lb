@@ -17,6 +17,7 @@ const (
 const (
 	serviceLabelEndpoint           = "io.rancher.service.external_lb.endpoint"
 	serviceLabelEndpointLegacy     = "io.rancher.service.external_lb_endpoint"
+	serviceLabelRegion						 = "io.rancher.service.external_lb.region"
 	serviceLabelFrontendProtocol   = "io.rancher.service.external_lb.frontend_protocol"
 	serviceLabelFrontendPort       = "io.rancher.service.external_lb.frontend_port"
 	serviceLabelFrontendSSLCert    = "io.rancher.service.external_lb.frontend_ssl_cert"
@@ -91,6 +92,13 @@ func (m *MetadataClient) GetMetadataLBConfigs() (map[string]model.LBConfig, erro
 		}
 		if !ok {
 			continue
+		}
+
+		var awsRegion string
+		if val, ok := service.Labels[serviceLabelRegion]; ok {
+			awsRegion = val
+		} else {
+			awsRegion = ""
 		}
 
 		// label exists, configure external LB
@@ -244,6 +252,7 @@ func (m *MetadataClient) GetMetadataLBConfigs() (map[string]model.LBConfig, erro
 		}
 		config := model.LBConfig{
 			EndpointName: endpoint,
+			AwsRegion:		awsRegion,
 			Frontends:    frontends,
 		}
 		lbConfigs[endpoint] = config
